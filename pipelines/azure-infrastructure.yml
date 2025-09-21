@@ -1,15 +1,12 @@
 # Azure DevOps Pipeline for .NET App Infrastructure Deployment
 
-trigger:
-  branches:
-    include:
-    - main
-    - develop
-  paths:
-    include:
-    - bicep/*
-    - parameters/*
-    - pipelines/*
+trigger: none
+
+paths:
+  include:
+  - bicep/*
+  - parameters/*
+  - pipelines/*
 
 variables:
   # Azure Service Connection name (update this with your actual service connection name)
