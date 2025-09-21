@@ -1,17 +1,9 @@
 # Azure DevOps Pipeline for .NET App Infrastructure Deployment
 
-trigger:
-  branches:
-    include:
-    - main
-    - develop
-  paths:
-    include:
-    - bicep/*
-    - parameters/*
-    - pipelines/*
+# No automatic triggers - manual execution only
+trigger: none
 
-# Allow manual triggers
+# Allow manual triggers from UI
 pr: none
 
 parameters:
