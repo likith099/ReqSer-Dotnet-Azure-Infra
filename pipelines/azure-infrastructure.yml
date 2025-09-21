@@ -1,24 +1,40 @@
 # Azure DevOps Pipeline for .NET App Infrastructure Deployment
 
-trigger: none
+trigger:
+  branches:
+    include:
+    - main
+    - develop
+  paths:
+    include:
+    - bicep/*
+    - parameters/*
+    - pipelines/*
 
-paths:
-  include:
-  - bicep/*
-  - parameters/*
-  - pipelines/*
+# Allow manual triggers
+pr: none
+
+parameters:
+- name: environment
+  displayName: 'Environment'
+  type: string
+  default: 'dev'
+  values:
+  - dev
+  - staging
+  - prod
 
 variables:
   # Azure Service Connection name (update this with your actual service connection name)
   azureServiceConnection: 'ReqSer-app-infra-Dev'
-  # Subscription ID
-  subscriptionId: '$(subscriptionId)'
-  # Resource Group Name
-  resourceGroupName: 'rg-dotnet-app-$(Build.BuildId)'
+  # Resource Group Name - includes environment parameter
+  resourceGroupName: 'rg-dotnet-app-${{ parameters.environment }}-$(Build.BuildId)'
   # Location
   location: 'East US'
-  # Web App Name
-  webAppName: 'webapp-dotnet-$(Build.BuildId)'
+  # Web App Name - includes environment parameter
+  webAppName: 'webapp-dotnet-${{ parameters.environment }}-$(Build.BuildId)'
+  # Environment parameter file
+  parameterFile: 'parameters/${{ parameters.environment }}.parameters.json'
   
 pool:
   vmImage: 'ubuntu-latest'
@@ -47,12 +63,27 @@ stages:
         scriptType: 'bash'
         scriptLocation: 'inlineScript'
         inlineScript: |
-          az deployment sub validate \
-            --location "$(location)" \
-            --template-file bicep/deploy.bicep \
-            --parameters resourceGroupName="$(resourceGroupName)" \
-                        location="$(location)" \
-                        webAppName="$(webAppName)"
+          echo "Validating deployment for environment: ${{ parameters.environment }}"
+          echo "Using parameter file: $(parameterFile)"
+          
+          # Validate using parameter file if exists, otherwise use inline parameters
+          if [ -f "$(parameterFile)" ]; then
+            echo "Using parameter file: $(parameterFile)"
+            az deployment sub validate \
+              --location "$(location)" \
+              --template-file bicep/deploy.bicep \
+              --parameters @$(parameterFile) \
+                          resourceGroupName="$(resourceGroupName)" \
+                          webAppName="$(webAppName)"
+          else
+            echo "Parameter file not found, using inline parameters"
+            az deployment sub validate \
+              --location "$(location)" \
+              --template-file bicep/deploy.bicep \
+              --parameters resourceGroupName="$(resourceGroupName)" \
+                          location="$(location)" \
+                          webAppName="$(webAppName)"
+          fi
 
 - stage: Deploy
   displayName: 'Deploy Infrastructure'
@@ -60,8 +91,8 @@ stages:
   condition: succeeded()
   jobs:
   - deployment: DeployInfrastructure
-    displayName: 'Deploy to Azure'
-    environment: 'production'
+    displayName: 'Deploy to Azure (${{ parameters.environment }})'
+    environment: '${{ parameters.environment }}'
     strategy:
       runOnce:
         deploy:
@@ -75,13 +106,31 @@ stages:
               scriptType: 'bash'
               scriptLocation: 'inlineScript'
               inlineScript: |
-                az deployment sub create \
-                  --location "$(location)" \
-                  --template-file bicep/deploy.bicep \
-                  --parameters resourceGroupName="$(resourceGroupName)" \
-                              location="$(location)" \
-                              webAppName="$(webAppName)" \
-                  --name "infrastructure-deployment-$(Build.BuildId)"
+                echo "Deploying infrastructure for environment: ${{ parameters.environment }}"
+                echo "Resource Group: $(resourceGroupName)"
+                echo "Web App: $(webAppName)"
+                echo "Location: $(location)"
+                
+                # Deploy using parameter file if exists, otherwise use inline parameters
+                if [ -f "$(parameterFile)" ]; then
+                  echo "Using parameter file: $(parameterFile)"
+                  az deployment sub create \
+                    --location "$(location)" \
+                    --template-file bicep/deploy.bicep \
+                    --parameters @$(parameterFile) \
+                                resourceGroupName="$(resourceGroupName)" \
+                                webAppName="$(webAppName)" \
+                    --name "infrastructure-deployment-${{ parameters.environment }}-$(Build.BuildId)"
+                else
+                  echo "Parameter file not found, using inline parameters"
+                  az deployment sub create \
+                    --location "$(location)" \
+                    --template-file bicep/deploy.bicep \
+                    --parameters resourceGroupName="$(resourceGroupName)" \
+                                location="$(location)" \
+                                webAppName="$(webAppName)" \
+                    --name "infrastructure-deployment-${{ parameters.environment }}-$(Build.BuildId)"
+                fi
           
           - task: AzureCLI@2
             displayName: 'Get Deployment Outputs'
@@ -91,10 +140,30 @@ stages:
               scriptLocation: 'inlineScript'
               inlineScript: |
                 # Get the web app URL from deployment outputs
+                deploymentName="infrastructure-deployment-${{ parameters.environment }}-$(Build.BuildId)"
+                
                 webAppUrl=$(az deployment sub show \
-                  --name "infrastructure-deployment-$(Build.BuildId)" \
+                  --name "$deploymentName" \
                   --query properties.outputs.webAppUrl.value \
                   --output tsv)
                 
+                webAppName=$(az deployment sub show \
+                  --name "$deploymentName" \
+                  --query properties.outputs.webAppName.value \
+                  --output tsv)
+                
+                resourceGroupName=$(az deployment sub show \
+                  --name "$deploymentName" \
+                  --query properties.outputs.resourceGroupName.value \
+                  --output tsv)
+                
+                echo "🎉 Deployment completed successfully!"
+                echo "Environment: ${{ parameters.environment }}"
                 echo "Web App URL: $webAppUrl"
+                echo "Web App Name: $webAppName"
+                echo "Resource Group: $resourceGroupName"
+                
+                # Set pipeline variables for downstream use
                 echo "##vso[task.setvariable variable=webAppUrl;isOutput=true]$webAppUrl"
+                echo "##vso[task.setvariable variable=webAppName;isOutput=true]$webAppName"
+                echo "##vso[task.setvariable variable=resourceGroupName;isOutput=true]$resourceGroupName"
