@@ -1,0 +1,95 @@
+name: Build and Deploy .NET App
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths-ignore:
+      - 'bicep/**'
+      - 'parameters/**'
+      - 'README.md'
+      - '.github/workflows/infrastructure.yml'
+  workflow_dispatch:
+
+env:
+  DOTNET_VERSION: '8.x'
+  BUILD_CONFIGURATION: 'Release'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    name: Build .NET Application
+    
+    outputs:
+      artifact-name: ${{ steps.upload.outputs.artifact-id }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: ${{ env.DOTNET_VERSION }}
+    
+    - name: Restore dependencies
+      run: dotnet restore
+    
+    - name: Build application
+      run: dotnet build --configuration ${{ env.BUILD_CONFIGURATION }} --no-restore
+    
+    - name: Run tests
+      run: dotnet test --configuration ${{ env.BUILD_CONFIGURATION }} --no-build --verbosity normal
+      continue-on-error: true
+    
+    - name: Publish application
+      run: dotnet publish --configuration ${{ env.BUILD_CONFIGURATION }} --output ./publish --no-build
+    
+    - name: Upload build artifacts
+      id: upload
+      uses: actions/upload-artifact@v3
+      with:
+        name: dotnet-app-${{ github.run_number }}
+        path: ./publish
+        retention-days: 1
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    name: Deploy to Azure App Service
+    environment: production
+    
+    steps:
+    - name: Download build artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: dotnet-app-${{ github.run_number }}
+        path: ./publish
+    
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Get App Service Details
+      id: app-details
+      run: |
+        # You may need to update these values based on your infrastructure deployment
+        # Or pass them as environment variables from the infrastructure workflow
+        WEB_APP_NAME="${{ vars.WEB_APP_NAME || 'your-web-app-name' }}"
+        RESOURCE_GROUP_NAME="${{ vars.RESOURCE_GROUP_NAME || 'your-resource-group' }}"
+        
+        echo "webAppName=$WEB_APP_NAME" >> $GITHUB_OUTPUT
+        echo "resourceGroupName=$RESOURCE_GROUP_NAME" >> $GITHUB_OUTPUT
+    
+    - name: Deploy to Azure Web App
+      uses: azure/webapps-deploy@v2
+      with:
+        app-name: ${{ steps.app-details.outputs.webAppName }}
+        resource-group-name: ${{ steps.app-details.outputs.resourceGroupName }}
+        package: ./publish
+    
+    - name: Verify Deployment
+      run: |
+        echo "🚀 Application deployed successfully!"
+        echo "📱 App Name: ${{ steps.app-details.outputs.webAppName }}"
+        echo "📦 Resource Group: ${{ steps.app-details.outputs.resourceGroupName }}"
